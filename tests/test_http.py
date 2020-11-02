@@ -391,6 +391,35 @@ async def test_sessions():
     assert re.compile(r"Path").search(value) is not None
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_muliple_sessions():
+    class SimpleHttpApp(AsyncConsumer):
+        async def http_request(self, event):
+            await database_sync_to_async(self.scope["session"].save)()
+            assert self.scope["method"] == "GET"
+            await self.send(
+                {"type": "http.response.start", "status": 200, "headers": []}
+            )
+            await self.send({"type": "http.response.body", "body": self.scope["path"].encode()})
+
+    app = SessionMiddlewareStack(SimpleHttpApp.as_asgi())
+
+    first_communicator = HttpCommunicator(app, "GET", "/first/")
+    # Testing the first instance first works just fine…
+    # first_response = await first_communicator.get_response()
+    # assert first_response["body"] == b"/first/"
+
+    second_communicator = HttpCommunicator(app, "GET", "/second/")
+    second_response = await second_communicator.get_response()
+    assert second_response["body"] == b"/second/"
+
+    # But we need to test them out-of-order.
+    # Alas this errors... (rather than fails)
+    first_response = await first_communicator.get_response()
+    assert first_response["body"] == b"/first/"
+
+
 class MiddlewareTests(unittest.TestCase):
     @pytest.mark.filterwarnings("ignore::DeprecationWarning")
     def test_middleware_caching(self):
